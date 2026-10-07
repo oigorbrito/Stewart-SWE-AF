@@ -1,0 +1,38 @@
+name: Stewart readiness conformance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    name: Synthetic readiness conformance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          bash -n stewart/readiness/*.sh
+          bash -n tests/stewart/readiness/*.sh
+      - name: Classifier matrix
+        run: bash tests/stewart/readiness/test_classifier_v2.sh
+      - name: Run association matrix
+        run: bash tests/stewart/readiness/test_run_association.sh
+      - name: Provenance guard
+        run: |
+          set -euo pipefail
+          jq -e '.source_repository == "oigorbrito/Stewart-harness"' tests/stewart/readiness/provenance.json >/dev/null
+          jq -e '.source_commit == "94056c2dcd855527a2caeb20dba9a1b963cbc6dc"' tests/stewart/readiness/provenance.json >/dev/null
+          jq -e '.upstream_source_commit == "450243c4de7223db5d2e0b10de737de403520d3d"' tests/stewart/readiness/provenance.json >/dev/null
+          jq -e '.authority == ["READ","REPORT"]' tests/stewart/readiness/provenance.json >/dev/null
