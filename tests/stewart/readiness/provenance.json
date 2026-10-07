@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "capability": "repository-steward-readiness",
+  "source_repository": "oigorbrito/Stewart-harness",
+  "source_commit": "94056c2dcd855527a2caeb20dba9a1b963cbc6dc",
+  "upstream_source_repository": "oigorbrito/searchleads",
+  "upstream_source_commit": "450243c4de7223db5d2e0b10de737de403520d3d",
+  "acceptance_scope": "synthetic_core_import",
+  "authority": ["READ", "REPORT"],
+  "notes": "Synthetic conformance implementation/tests imported from the accepted Stewart harness snapshot. Native GitHub lifecycle qualification remains in Stewart-harness and is not claimed by this import.",
+  "imported_components": [
+    "stewart/readiness/repository-steward-readiness-classifier.sh",
+    "stewart/readiness/repository-steward-readiness-classifier-v2.sh",
+    "stewart/readiness/repository-steward-readiness-run-association.sh",
+    "tests/stewart/readiness/test_classifier_v2.sh",
+    "tests/stewart/readiness/test_run_association.sh"
+  ]
+}
