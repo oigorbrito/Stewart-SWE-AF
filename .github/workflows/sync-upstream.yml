@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   sync:
@@ -24,30 +23,12 @@ jobs:
           git remote add upstream https://github.com/Agent-Field/SWE-AF.git
           git fetch upstream main
 
-      - name: Merge upstream into sync branch
+      - name: Merge upstream directly into main
         run: |
-          git checkout -B upstream-sync main
           if git diff --quiet HEAD upstream/main; then
             echo "Fork is already up to date with upstream."
-            echo "SYNC_NEEDED=false" >> "$GITHUB_ENV"
             exit 0
           fi
+
           git merge --no-edit upstream/main
-          echo "SYNC_NEEDED=true" >> "$GITHUB_ENV"
-
-      - name: Push sync branch
-        if: env.SYNC_NEEDED == 'true'
-        run: |
-          git push --force-with-lease origin upstream-sync
-
-      - name: Open or update sync PR
-        if: env.SYNC_NEEDED == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          existing_pr=$(gh pr list --base main --head upstream-sync --state open --json number --jq '.[0].number')
-          if [ -n "$existing_pr" ]; then
-            echo "Updating existing PR #$existing_pr"
-          else
-            gh pr create               --base main               --head upstream-sync               --title "chore: sync upstream SWE-AF"               --body "Automated sync from Agent-Field/SWE-AF. Review conflicts and project-specific changes before merging."
-          fi
+          git push origin main
