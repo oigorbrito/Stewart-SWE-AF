@@ -55,6 +55,7 @@ services:
       - GH_TOKEN=${GH_TOKEN:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-${GOOGLE_API_KEY:-}}
       - DATABASE_URL_TEST=${DATABASE_URL_TEST:-postgres://builder:builder@build-db:5432/buildtest}
     ports:
       - "8003:8003"
@@ -87,6 +88,7 @@ services:
       - INFRON_API_KEY=${INFRON_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-${GOOGLE_API_KEY:-}}
       - OPENCODE_MODEL=${OPENCODE_MODEL:-}
       # Empty = auto: open_code when only an OpenRouter or Infron key is
       # present, else claude_code (see swe-agent note).
