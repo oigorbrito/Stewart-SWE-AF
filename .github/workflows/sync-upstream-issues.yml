@@ -1,0 +1,61 @@
+name: Sync upstream issues
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 6 * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync upstream issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM: Agent-Field/SWE-AF
+          FORK: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          page=1
+          while true; do
+            issues=$(gh api --paginate \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/$UPSTREAM/issues?state=all&per_page=100" \
+              --jq '.[] | select(.pull_request == null) | [.number,.title,.body,.state,.html_url] | @base64' | sed -n "${page},${page}p")
+
+            [ -z "$issues" ] && break
+
+            encoded="$issues"
+            number=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[0]')
+            title=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[1]')
+            body=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[2] // ""')
+            state=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[3]')
+            url=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[4]')
+
+            marker="<!-- upstream-issue: $UPSTREAM#$number -->"
+            existing=$(gh api --paginate "/repos/$FORK/issues?state=all&per_page=100" --jq ".[] | select(.pull_request == null) | select(.body != null and (.body | contains(\\"$marker\\"))) | .number" | head -n1 || true)
+
+            sync_body="$marker
+
+Upstream: $url
+
+$body"
+
+            if [ -n "$existing" ]; then
+              gh api --method PATCH "/repos/$FORK/issues/$existing" \
+                -f title="$title" \
+                -f body="$sync_body" \
+                -f state="$state" >/dev/null
+            else
+              gh api --method POST "/repos/$FORK/issues" \
+                -f title="$title" \
+                -f body="$sync_body" >/dev/null
+            fi
+
+            page=$((page + 1))
+          done
