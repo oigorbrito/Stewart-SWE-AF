@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   sync:
@@ -18,17 +19,49 @@ jobs:
           fetch-depth: 0
           ref: main
 
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Fetch upstream
         run: |
           git remote add upstream https://github.com/Agent-Field/SWE-AF.git
           git fetch upstream main
 
-      - name: Merge upstream directly into main
+      - name: Prepare upstream sync branch
         run: |
           if git diff --quiet HEAD upstream/main; then
             echo "Fork is already up to date with upstream."
             exit 0
           fi
 
+          git switch -c upstream-sync
           git merge --no-edit upstream/main
-          git push origin main
+          git push --force-with-lease origin upstream-sync
+
+      - name: Open or reuse sync pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="$(gh pr list --base main --head upstream-sync --state open --json number --jq '.[0].number')"
+
+          if [ -z "$PR_NUMBER" ]; then
+            PR_URL="$(gh pr create               --base main               --head upstream-sync               --title "chore: sync upstream SWE-AF"               --body "Automated synchronization from Agent-Field/SWE-AF main. This PR is intentionally reviewed/validated by GitHub Actions before entering the fork main branch.")"
+            PR_NUMBER="${PR_URL##*/}"
+          fi
+
+          echo "PR #$PR_NUMBER"
+
+      - name: Enable automatic merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="$(gh pr list --base main --head upstream-sync --state open --json number --jq '.[0].number')"
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No open sync PR found."
+            exit 1
+          fi
+
+          gh pr merge "$PR_NUMBER" --auto --merge
