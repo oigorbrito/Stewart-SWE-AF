@@ -55,7 +55,6 @@ services:
       - GH_TOKEN=${GH_TOKEN:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - OPENCODE_MODEL=${OPENCODE_MODEL:-}
       - DATABASE_URL_TEST=${DATABASE_URL_TEST:-postgres://builder:builder@build-db:5432/buildtest}
     ports:
       - "8003:8003"
