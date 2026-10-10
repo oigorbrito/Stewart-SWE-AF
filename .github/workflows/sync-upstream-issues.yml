@@ -38,7 +38,7 @@ jobs:
             url=$(printf '%s' "$encoded" | base64 --decode | jq -r '.[4]')
 
             marker="<!-- upstream-issue: $UPSTREAM#$number -->"
-            existing=$(gh api --paginate "/repos/$FORK/issues?state=all&per_page=100" --jq ".[] | select(.pull_request == null) | select(.body != null and (.body | contains(\\"$marker\\"))) | .number" | head -n1 || true)
+            existing=$(gh api --paginate "/repos/$FORK/issues?state=all&per_page=100" --jq '.[]' | jq -r --arg marker "$marker" 'select(.pull_request == null) | select(.body != null and (.body | contains($marker))) | .number' | head -n1 || true)
 
             sync_body="$marker
 
