@@ -173,6 +173,27 @@ class TestJulesSimulatedTransport(unittest.TestCase):
         # Confirms zero automatic retries
         self.assertEqual(mock_urlopen.call_count, 1)
 
+    @patch("urllib.request.urlopen")
+    def test_http_error_429_rate_limit_sanitization(self, mock_urlopen):
+        import io
+        error_body = io.BytesIO(b'{"error": {"code": 429, "message": "Resource has been exhausted (e.g. check quota)."}}')
+        error = urllib.error.HTTPError(
+            url="https://jules.googleapis.com/v1alpha/sessions",
+            code=429,
+            msg="Too Many Requests",
+            hdrs={},
+            fp=error_body,
+        )
+        mock_urlopen.side_effect = error
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.adapter.create_session("Rate limit test")
+
+        err_msg = str(ctx.exception)
+        self.assertIn("Jules API POST /sessions HTTP error 429 (Too Many Requests): Resource has been exhausted", err_msg)
+        self.assertNotIn("secret-key-12345", err_msg)
+        self.assertEqual(mock_urlopen.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

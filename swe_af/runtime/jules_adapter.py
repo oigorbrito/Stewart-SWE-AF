@@ -179,11 +179,18 @@ def _persist_session_audit(session_id: str, outcome: str = "created", log_path: 
         ) from exc
 
 
+TERMINAL_SUCCESS_STATES = {"COMPLETED", "SUCCEEDED"}
+TERMINAL_FAILURE_STATES = {"FAILED", "CANCELLED", "CANCELED"}
+TERMINAL_STATES = TERMINAL_SUCCESS_STATES | TERMINAL_FAILURE_STATES
+
+
 class JulesHarnessAgent:
     def __init__(self, audit_path: Optional[Path] = None):
         self.audit_path = audit_path
 
     async def harness(self, prompt: str, **options: Any) -> Any:
+        import time
+
         adapter = JulesAdapter()
         require_plan_approval = options.get("require_plan_approval", True)
         session = adapter.create_session(prompt, require_plan_approval=require_plan_approval)
@@ -197,29 +204,129 @@ class JulesHarnessAgent:
             except Exception as exc:
                 audit_error = str(exc)
 
-        # Step 2: Query follow-up GET calls only when requested (skip if skip_status_and_result is True)
+        # Step 2: Query follow-up status and activities
         skip_queries = options.get("skip_status_and_result", False)
+        wait_for_completion = options.get("wait_for_completion", True)
+        poll_interval = float(options.get("poll_interval", os.environ.get("JULES_POLL_INTERVAL", "1.0")))
+        poll_timeout = float(
+            options.get("timeout_seconds")
+            or options.get("poll_timeout", os.environ.get("JULES_POLL_TIMEOUT", "300.0"))
+        )
+
         status: Dict[str, Any] = {}
         result: Dict[str, Any] = {}
-        if not skip_queries and session_id:
-            try:
-                status = adapter.get_status(session_id)
-            except Exception as exc:
-                status = {"unconfirmed": True, "error": str(exc)}
+        timed_out = False
+        start_time = time.monotonic()
+        deadline = start_time + poll_timeout
 
-            try:
-                result = adapter.get_result(session_id)
-            except Exception as exc:
-                result = {"unconfirmed": True, "error": str(exc)}
+        if not skip_queries and session_id:
+            while True:
+                try:
+                    status = adapter.get_status(session_id)
+                except Exception as exc:
+                    status = {"unconfirmed": True, "error": str(exc), "state": "UNCONFIRMED"}
+
+                state_str = str(
+                    status.get("state")
+                    or session.get("state")
+                    or session.get("status")
+                    or "UNKNOWN"
+                ).upper()
+
+                if state_str in TERMINAL_STATES:
+                    break
+
+                if not wait_for_completion:
+                    break
+
+                if status.get("unconfirmed"):
+                    # Stop polling if remote endpoint reports an error
+                    break
+
+                now = time.monotonic()
+                if now >= deadline:
+                    timed_out = True
+                    break
+
+                remaining = deadline - now
+                sleep_dur = min(poll_interval, remaining)
+                if sleep_dur > 0:
+                    await asyncio.sleep(sleep_dur)
+                else:
+                    timed_out = True
+                    break
+
+            # Fetch activities / results once terminal, unconfirmed, or requested
+            if state_str in TERMINAL_STATES or not wait_for_completion or status.get("unconfirmed"):
+                try:
+                    result = adapter.get_result(session_id)
+                except Exception as exc:
+                    result = {"unconfirmed": True, "error": str(exc), "activities": []}
+            elif timed_out:
+                result = {"timeout": True, "activities": []}
+            else:
+                result = {"activities": [], "in_progress": True}
         else:
             status = {"state": session.get("state") or session.get("status") or "QUEUED", "queried": False}
             result = {"queried": False}
+
+        state_str = str(
+            status.get("state")
+            or session.get("state")
+            or session.get("status")
+            or "QUEUED"
+        ).upper()
+
+        # Step 3: Determine outcome, errors, and terminal completion
+        error_message: Optional[str] = None
+        failure_type = "none"
+
+        if audit_error:
+            error_message = audit_error
+            failure_type = "audit_persistence_failure"
+        elif timed_out:
+            error_message = f"Jules session {session_id} timed out after {poll_timeout}s in state {state_str}"
+            failure_type = "timeout"
+        elif state_str in TERMINAL_FAILURE_STATES:
+            error_message = f"Jules session {session_id} ended with state {state_str}"
+            failure_type = "session_failed"
+        elif status.get("unconfirmed") and status.get("error"):
+            error_message = status.get("error")
+            failure_type = "status_query_error"
+
+        is_error = bool(error_message)
+        complete = (state_str in TERMINAL_SUCCESS_STATES) and not is_error
+
+        # Extract changed files from activities if present
+        files_changed: list[str] = []
+        activities = result.get("activities", []) if isinstance(result, dict) else []
+        if isinstance(activities, list):
+            for act in activities:
+                if isinstance(act, dict):
+                    if "files_changed" in act and isinstance(act["files_changed"], list):
+                        files_changed.extend(str(f) for f in act["files_changed"])
+                    elif "file" in act and isinstance(act["file"], str):
+                        files_changed.append(act["file"])
+                    elif "artifacts" in act and isinstance(act["artifacts"], list):
+                        for art in act["artifacts"]:
+                            if isinstance(art, dict) and "path" in art:
+                                files_changed.append(str(art["path"]))
+        seen = set()
+        files_changed = [f for f in files_changed if not (f in seen or seen.add(f))]
+
+        summary_parts = [f"Jules session {session_id} ({state_str})"]
+        if error_message:
+            summary_parts.append(f"error: {error_message}")
+        summary = " - ".join(summary_parts)
 
         parsed_data = {
             "session_id": session_id,
             "status": status,
             "result": result,
             "session": session,
+            "summary": summary,
+            "complete": complete,
+            "files_changed": files_changed,
         }
         if audit_error:
             parsed_data["audit_warning"] = audit_error
@@ -235,19 +342,28 @@ class JulesHarnessAgent:
             except Exception:
                 parsed_obj = None
 
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+
         return SimpleNamespace(
             result=raw_result_str,
             parsed=parsed_obj or parsed_data,
-            is_error=bool(audit_error),
-            error_message=audit_error,
-            failure_type="audit_persistence_failure" if audit_error else "none",
+            is_error=is_error,
+            error_message=error_message,
+            failure_type=failure_type,
             session_id=session_id,
+            summary=summary,
             status=status,
             activities=result,
             cost_usd=0.0,
             num_turns=1,
-            duration_ms=0,
+            duration_ms=elapsed_ms,
             messages=[{"role": "user", "content": prompt}],
+            input_tokens=len(prompt.split()),
+            output_tokens=len(raw_result_str.split()),
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            total_tokens=len(prompt.split()) + len(raw_result_str.split()),
+            model="jules",
         )
 
 
