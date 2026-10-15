@@ -103,6 +103,24 @@ class TestOpenCodeProviders:
         assert infron["options"]["baseURL"] == "https://llm.onerouter.pro/v1"
         assert infron["options"]["apiKey"] == "{env:INFRON_API_KEY}"
 
+    def test_gemini_live_provider_is_explicit_and_env_keyed(self, opencode_config: dict) -> None:
+        provider = opencode_config["provider"]["google-gemini"]
+        assert provider["npm"] == "@ai-sdk/openai-compatible"
+        assert provider["env"] == ["GEMINI_API_KEY"]
+        assert provider["options"]["apiKey"] == "{env:GEMINI_API_KEY}"
+        assert provider["options"]["baseURL"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+        assert provider["options"]["maxRetries"] == 0
+        assert provider["models"]["gemini-free-tier"]["id"] == "{env:SWE_GEMINI_MODEL}"
+        assert "gemini-2.0-flash" not in json.dumps(provider)
+        assert "gemini-2.0-flash-lite" not in json.dumps(provider)
+
+    def test_gemini_mock_provider_is_loopback_only(self, opencode_config: dict) -> None:
+        provider = opencode_config["provider"]["google-gemini-mock"]
+        assert provider["options"]["baseURL"] == "http://127.0.0.1:8765/v1"
+        assert provider["options"]["apiKey"] == "local-mock-no-secret"
+        assert provider["options"]["maxRetries"] == 0
+        assert provider["models"]["gemini-mock-model"]["id"] == "gemini-local-mock"
+
     def test_infron_declares_models(self, opencode_config: dict) -> None:
         """openai-compatible providers are not in models.dev, so models must
         be listed explicitly or OpenCode cannot resolve `-m infron/<id>`."""

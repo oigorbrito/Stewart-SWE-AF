@@ -27,6 +27,7 @@ _PROVIDER_ENV_KEYS = (
     "INFRON_API_KEY",
     "SWE_DEFAULT_RUNTIME",
     "SWE_DEFAULT_MODEL",
+    "SWE_GEMINI_MODEL",
     "AI_MODEL",
     "HARNESS_MODEL",
     "SWE_MODEL_LOW",
@@ -129,6 +130,28 @@ class TestBuildConfig(unittest.TestCase):
             resolved = cfg.resolved_models()
         self.assertEqual(resolved["coder_model"], "openrouter/deepseek/deepseek-v4-flash-0731")
 
+
+class TestGeminiRuntimeSelection(unittest.TestCase):
+    """Gemini uses the existing explicit OpenCode runtime + flat model map."""
+
+    def test_explicit_gemini_model_env_routes_every_unspecified_role(self) -> None:
+        model = "google-gemini/gemini-free-tier"
+        with _provider_env(
+            SWE_DEFAULT_RUNTIME="open_code", SWE_DEFAULT_MODEL=model, HARNESS_MODEL=model
+        ):
+            config = BuildConfig()
+            resolved = config.resolved_models()
+        self.assertEqual(config.runtime, "open_code")
+        self.assertEqual(config.ai_provider, "opencode")
+        self.assertEqual(set(resolved.values()), {model})
+
+    def test_mock_profile_alias_is_separate_from_live_provider_alias(self) -> None:
+        model = "google-gemini-mock/gemini-mock-model"
+        with _provider_env(
+            SWE_DEFAULT_RUNTIME="open_code", SWE_DEFAULT_MODEL=model, HARNESS_MODEL=model
+        ):
+            resolved = BuildConfig().resolved_models()
+        self.assertEqual(set(resolved.values()), {model})
 
 class TestInfronAutoSelection(unittest.TestCase):
     """The Infron gateway mirrors the existing gateway auto-selection path:

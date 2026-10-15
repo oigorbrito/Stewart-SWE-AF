@@ -194,6 +194,37 @@
         }
       }
     },
+    "google-gemini": {
+      "name": "Google Gemini OpenAI-compatible (live; not authorized by default)",
+      "npm": "@ai-sdk/openai-compatible",
+      "env": ["GEMINI_API_KEY"],
+      "options": {
+        "apiKey": "{env:GEMINI_API_KEY}",
+        "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "maxRetries": 0
+      },
+      "models": {
+        "gemini-free-tier": {
+          "name": "Gemini model selected by SWE_GEMINI_MODEL",
+          "id": "{env:SWE_GEMINI_MODEL}"
+        }
+      }
+    },
+    "google-gemini-mock": {
+      "name": "Local Gemini-compatible mock (fixture only)",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "local-mock-no-secret",
+        "baseURL": "http://127.0.0.1:8765/v1",
+        "maxRetries": 0
+      },
+      "models": {
+        "gemini-mock-model": {
+          "name": "Deterministic local fixture",
+          "id": "gemini-local-mock"
+        }
+      }
+    },
     "infron": {
       "name": "Infron",
       "npm": "@ai-sdk/openai-compatible",
