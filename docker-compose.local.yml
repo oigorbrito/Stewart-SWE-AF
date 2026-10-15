@@ -33,11 +33,15 @@ services:
       - PORT=8003
       # Callback URL for control plane to reach this agent
       - AGENT_CALLBACK_URL=http://localhost:8003
+      - SWE_HARNESS_BACKEND=${SWE_HARNESS_BACKEND-agentfield}
       # Empty = auto: open_code when only an OpenRouter or Infron key is
       # present, else claude_code. A baked claude_code fallback here would
       # break gateway-only deployments.
       - SWE_DEFAULT_RUNTIME=${SWE_DEFAULT_RUNTIME:-}
       - SWE_DEFAULT_MODEL=${SWE_DEFAULT_MODEL:-}
+      - SWE_GEMINI_MODEL=${SWE_GEMINI_MODEL:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - HARNESS_MODEL=${HARNESS_MODEL:-openrouter/deepseek/deepseek-v4-flash-0731}
       - SWE_CODEX_AUTH_MODE=${SWE_CODEX_AUTH_MODE:-auto}
       # Provider keys and the GitHub token, so exporting them in the shell
       # works as well as writing them into .env.
@@ -47,6 +51,7 @@ services:
       - INFRON_API_KEY=${INFRON_API_KEY:-}
       - GH_TOKEN=${GH_TOKEN:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - JULES_API_KEY=${JULES_API_KEY:-}
       - DATABASE_URL_TEST=${DATABASE_URL_TEST:-postgres://builder:builder@build-db:5432/buildtest}
     ports:
       - "8003:8003"

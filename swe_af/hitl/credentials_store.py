@@ -84,8 +84,8 @@ def inject_credentials_into_env(
     the scout overrides any stale value already in os.environ (e.g. an
     expired RAILWAY_TOKEN from a previous build).
 
-    Callers should use this immediately before each ``router.harness(...)``
-    call, passing the result as the ``env=`` kwarg. The base is normally
+    Callers should use this immediately before each harness dispatch,
+    passing the result as the ``env=`` kwarg. The base is normally
     ``dict(os.environ)`` so the subprocess still inherits everything the
     parent has — we only ADD/override the scoped creds.
     """

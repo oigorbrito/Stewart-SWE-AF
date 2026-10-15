@@ -82,7 +82,7 @@ def agentfield_server_guard() -> None:
 
         AGENTFIELD_SERVER=http://localhost:9999 python -m pytest ...
     """
-    server = os.environ.get("AGENTFIELD_SERVER", "")
+    server = os.environ.get("AGENTFIELD_SERVER", "").strip()
     if not server:
         raise RuntimeError(
             "AGENTFIELD_SERVER environment variable is not set. "
@@ -95,6 +95,36 @@ def agentfield_server_guard() -> None:
             "API host, which is not allowed in tests. "
             "Set AGENTFIELD_SERVER to a local address such as http://localhost:9999."
         )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolate_provider_environment() -> None:
+    """Isolate provider keys from the ambient environment during tests.
+
+    Tests expect clean base environment (claude_code default runtime) unless
+    explicitly overridden within individual tests or fixtures. Ambient shell
+    keys (like OPENROUTER_API_KEY) must not leak into test defaults.
+    """
+    keys_to_clean = (
+        "OPENROUTER_API_KEY",
+        "INFRON_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "SWE_DEFAULT_RUNTIME",
+        "SWE_DEFAULT_MODEL",
+        "AI_MODEL",
+        "HARNESS_MODEL",
+    )
+    saved = {k: os.environ.get(k) for k in keys_to_clean}
+    for k in keys_to_clean:
+        os.environ.pop(k, None)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -111,6 +141,7 @@ def attach_fast_router() -> None:
     # Set the private _agent attribute to satisfy AgentRouter's attachment check.
     # We use object.__setattr__ to avoid any potential __setattr__ guards.
     object.__setattr__(fast_router, "_agent", MagicMock())
+
 
 
 # ---------------------------------------------------------------------------

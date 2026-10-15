@@ -12,6 +12,7 @@ import logging
 from swe_af.fast import fast_router
 from swe_af.fast.prompts import FAST_PLANNER_SYSTEM_PROMPT, fast_planner_task_prompt
 from swe_af.fast.schemas import FastPlanResult, FastTask
+from swe_af.runtime.application_harness import configured_backend, dispatch_harness
 from swe_af.runtime.providers import runtime_to_harness_adapter
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,8 @@ async def fast_plan_tasks(
 
     provider = runtime_to_harness_adapter(ai_provider)
     try:
-        res = await fast_router.harness(
+        res = await dispatch_harness(
+            fast_router,
             prompt=task_prompt,
             schema=FastPlanResult,
             provider=provider,
@@ -111,7 +113,9 @@ async def fast_plan_tasks(
         )
         plan = res.parsed
     except Exception as e:
-        logger.exception("fast_plan_tasks: fast_router.harness() raised an exception; using fallback")
+        if configured_backend() == "local-mock":
+            raise
+        logger.exception("fast_plan_tasks: harness dispatch raised an exception; using fallback")
         _note(
             f"fast_plan_tasks: LLM call failed ({e}); returning fallback plan",
             tags=["fast_planner", "fallback", "error"],

@@ -37,6 +37,7 @@ from swe_af.execution.schemas import (
     VerificationResult,
     WorkspaceInfo,
 )
+from swe_af.runtime.application_harness import configured_backend, dispatch_harness
 from swe_af.runtime.providers import runtime_to_harness_adapter
 from swe_af.prompts.ci_fixer import SYSTEM_PROMPT as CI_FIXER_SYSTEM_PROMPT
 from swe_af.prompts.ci_fixer import ci_fixer_task_prompt
@@ -167,7 +168,8 @@ async def run_retry_advisor(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=RETRY_ADVISOR_SYSTEM_PROMPT,
             schema=RetryAdvice,
@@ -260,7 +262,8 @@ async def run_issue_advisor(
             workspace_manifest=ws_manifest,
             prior_user_responses=prior_user_responses,
         )
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=ISSUE_ADVISOR_SYSTEM_PROMPT,
             schema=IssueAdvisorDecision,
@@ -365,7 +368,8 @@ async def run_replanner(
         )
         current_prompt = task_prompt
         for attempt in range(2):
-            result = await router.harness(
+            result = await dispatch_harness(
+                router,
                 current_prompt,
                 system_prompt=REPLANNER_SYSTEM_PROMPT,
                 schema=ReplanDecision,
@@ -418,6 +422,8 @@ async def run_replanner(
     except FatalHarnessError:
         raise  # Non-retryable — propagate immediately
     except Exception as e:
+        if configured_backend() == "local-mock":
+            raise
         router.note(
             f"Replanner agent failed: {e}",
             tags=["replanner", "error"],
@@ -490,7 +496,8 @@ async def run_issue_writer(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=ISSUE_WRITER_SYSTEM_PROMPT,
             schema=IssueWriterOutput,
@@ -557,7 +564,8 @@ async def run_verifier(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=VERIFIER_SYSTEM_PROMPT,
             schema=VerificationResult,
@@ -642,7 +650,8 @@ async def run_git_init(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=system_prompt,
             schema=GitInitResult,
@@ -718,7 +727,8 @@ async def run_workspace_setup(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=WORKSPACE_SETUP_SYSTEM_PROMPT,
             schema=WorkspaceSetupResult,
@@ -783,7 +793,8 @@ async def run_merger(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=MERGER_SYSTEM_PROMPT,
             schema=MergeResult,
@@ -859,7 +870,8 @@ async def run_integration_tester(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=INTEGRATION_TESTER_SYSTEM_PROMPT,
             schema=IntegrationTestResult,
@@ -928,7 +940,8 @@ async def run_workspace_cleanup(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=WORKSPACE_CLEANUP_SYSTEM_PROMPT,
             schema=WorkspaceCleanupResult,
@@ -1006,7 +1019,8 @@ async def run_coder(
 
     harness_error = ""
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=maybe_apply_coder_guardrail(CODER_SYSTEM_PROMPT),
             schema=CoderResult,
@@ -1097,7 +1111,8 @@ async def run_qa(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=QA_SYSTEM_PROMPT,
             schema=QAResult,
@@ -1177,7 +1192,8 @@ async def run_code_reviewer(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=CODE_REVIEWER_SYSTEM_PROMPT,
             schema=CodeReviewResult,
@@ -1366,7 +1382,8 @@ async def generate_fix_issues(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=FIX_GENERATOR_SYSTEM_PROMPT,
             schema=FixGeneratorOutput,
@@ -1441,7 +1458,8 @@ async def run_repo_finalize(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=REPO_FINALIZE_SYSTEM_PROMPT,
             schema=RepoFinalizeResult,
@@ -1515,7 +1533,8 @@ async def run_github_pr(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=GITHUB_PR_SYSTEM_PROMPT,
             schema=GitHubPRResult,
@@ -1658,7 +1677,8 @@ async def run_ci_fixer(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=CI_FIXER_SYSTEM_PROMPT,
             schema=CIFixResult,
@@ -1758,7 +1778,8 @@ async def run_pr_resolver(
     provider = runtime_to_harness_adapter(ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             task_prompt,
             system_prompt=PR_RESOLVER_SYSTEM_PROMPT,
             schema=PRResolveResult,
