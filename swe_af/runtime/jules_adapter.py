@@ -2,8 +2,31 @@
 Uses JULES_API_KEY from env only; never logs it.
 No calls during import/init.
 """
-import os, json, urllib.request, urllib.error
+import os, json, re, urllib.request, urllib.error
 from typing import Any, Dict, Optional
+
+
+_SECRET_PATTERNS = [
+    re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]+", re.IGNORECASE),
+    re.compile(r"(?:api[_-]?key|token|secret|password|auth|authorization)\s*[:=]\s*['\"]?[A-Za-z0-9_\-\.]+['\"]?", re.IGNORECASE),
+    re.compile(r"AIza[A-Za-z0-9_\-]{30,}"),
+    re.compile(r"(?:sk-[A-Za-z0-9_\-]{20,}|gh[pousr]_[A-Za-z0-9_\-]{20,})"),
+]
+
+
+def _scrub_text(text: Any, api_key: Optional[str] = None) -> str:
+    if text is None:
+        return ""
+    scrubbed = str(text)
+    if api_key and len(api_key.strip()) >= 4:
+        scrubbed = scrubbed.replace(api_key.strip(), "[REDACTED]")
+    for pattern in _SECRET_PATTERNS:
+        scrubbed = pattern.sub("[REDACTED]", scrubbed)
+    # Collapse newlines, carriage returns, and tabs to prevent log injection
+    scrubbed = re.sub(r"[\r\n\t]+", " ", scrubbed).strip()
+    if len(scrubbed) > 512:
+        scrubbed = scrubbed[:509] + "..."
+    return scrubbed
 
 
 class JulesAdapter:
@@ -31,11 +54,14 @@ class JulesAdapter:
         if self.base in rel_path:
             rel_path = rel_path.split(self.base, 1)[-1]
         rel_path = rel_path.split("?")[0]  # strip any query string
+        rel_path = _scrub_text(rel_path, self.api_key)
 
         if isinstance(exc, urllib.error.HTTPError):
+            reason_val = getattr(exc, "reason", None) or getattr(exc, "msg", "")
+            reason_str = _scrub_text(reason_val, self.api_key)
             detail_msg = None
             try:
-                raw_body = exc.read().decode("utf-8", errors="ignore")
+                raw_body = exc.read(8192).decode("utf-8", errors="ignore")
                 if raw_body:
                     body_json = json.loads(raw_body)
                     if isinstance(body_json, dict) and "error" in body_json:
@@ -48,14 +74,17 @@ class JulesAdapter:
                 detail_msg = None
 
             if detail_msg:
-                return RuntimeError(
-                    f"Jules API {method} {rel_path} HTTP error {exc.code} ({exc.reason}): {detail_msg}"
-                )
+                clean_detail = _scrub_text(detail_msg, self.api_key)
+                if clean_detail:
+                    return RuntimeError(
+                        f"Jules API {method} {rel_path} HTTP error {exc.code} ({reason_str}): {clean_detail}"
+                    )
             return RuntimeError(
-                f"Jules API {method} {rel_path} HTTP error {exc.code}: {exc.reason}"
+                f"Jules API {method} {rel_path} HTTP error {exc.code}: {reason_str}"
             )
         if isinstance(exc, urllib.error.URLError):
-            return RuntimeError(f"Jules API {method} {rel_path} connection error: {exc.reason}")
+            reason_str = _scrub_text(getattr(exc, "reason", str(exc)), self.api_key)
+            return RuntimeError(f"Jules API {method} {rel_path} connection error: {reason_str}")
         return RuntimeError(f"Jules API {method} {rel_path} error: {type(exc).__name__}")
 
     def create_session(

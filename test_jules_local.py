@@ -194,6 +194,123 @@ class TestJulesSimulatedTransport(unittest.TestCase):
         self.assertNotIn("secret-key-12345", err_msg)
         self.assertEqual(mock_urlopen.call_count, 1)
 
+    @patch("urllib.request.urlopen")
+    def test_http_error_redacts_reflected_caller_api_key(self, mock_urlopen):
+        import io
+        error_body = io.BytesIO(b'{"error": {"code": 401, "message": "Invalid API key: secret-key-12345"}}')
+        error = urllib.error.HTTPError(
+            url="https://jules.googleapis.com/v1alpha/sessions",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=error_body,
+        )
+        mock_urlopen.side_effect = error
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.adapter.create_session("Reflected key test")
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn("secret-key-12345", err_msg)
+        self.assertIn("[REDACTED]", err_msg)
+        self.assertIn("Jules API POST /sessions HTTP error 401 (Unauthorized): Invalid API key: [REDACTED]", err_msg)
+
+    @patch("urllib.request.urlopen")
+    def test_http_error_redacts_simulated_bearer_token(self, mock_urlopen):
+        import io
+        error_body = io.BytesIO(b'{"error": {"code": 403, "message": "Bearer ya29.a0AfH6SMB_secret_token_12345 expired"}}')
+        error = urllib.error.HTTPError(
+            url="https://jules.googleapis.com/v1alpha/sessions",
+            code=403,
+            msg="Forbidden",
+            hdrs={},
+            fp=error_body,
+        )
+        mock_urlopen.side_effect = error
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.adapter.create_session("Bearer token test")
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn("ya29.a0AfH6SMB_secret_token_12345", err_msg)
+        self.assertIn("[REDACTED]", err_msg)
+
+    @patch("urllib.request.urlopen")
+    def test_http_error_redacts_simulated_google_api_key(self, mock_urlopen):
+        import io
+        simulated_key = "AIzaSyD1234567890123456789012345678901"
+        error_body = io.BytesIO(f'{{"error": {{"code": 400, "message": "Bad key {simulated_key}"}}}}'.encode("utf-8"))
+        error = urllib.error.HTTPError(
+            url="https://jules.googleapis.com/v1alpha/sessions",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=error_body,
+        )
+        mock_urlopen.side_effect = error
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.adapter.create_session("Google key test")
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn(simulated_key, err_msg)
+        self.assertIn("[REDACTED]", err_msg)
+
+    @patch("urllib.request.urlopen")
+    def test_http_error_redacts_simulated_key_value_secrets(self, mock_urlopen):
+        import io
+        error_body = io.BytesIO(b'{"error": {"code": 401, "message": "Unauthorized: token=\'simulated_super_secret_val\'"}}')
+        error = urllib.error.HTTPError(
+            url="https://jules.googleapis.com/v1alpha/sessions",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=error_body,
+        )
+        mock_urlopen.side_effect = error
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.adapter.create_session("KV secret test")
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn("simulated_super_secret_val", err_msg)
+        self.assertIn("[REDACTED]", err_msg)
+
+    @patch("urllib.request.urlopen")
+    def test_http_error_collapses_newlines_and_truncates_large_payload(self, mock_urlopen):
+        import io
+        multiline_msg = "Error header\r\nINJECTED LOG LINE\n" + ("A" * 600)
+        error_body = io.BytesIO(json.dumps({"error": {"message": multiline_msg}}).encode("utf-8"))
+        error = urllib.error.HTTPError(
+            url="https://jules.googleapis.com/v1alpha/sessions",
+            code=500,
+            msg="Internal Server Error",
+            hdrs={},
+            fp=error_body,
+        )
+        mock_urlopen.side_effect = error
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.adapter.create_session("Multiline test")
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn("\r", err_msg)
+        self.assertNotIn("\n", err_msg)
+        self.assertTrue(err_msg.endswith("..."))
+        self.assertLessEqual(len(err_msg), 650)
+
+    @patch("urllib.request.urlopen")
+    def test_url_error_redacts_credentials_in_reason(self, mock_urlopen):
+        error = urllib.error.URLError(reason="Failed to connect to https://user:secret-key-12345@host:443")
+        mock_urlopen.side_effect = error
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.adapter.create_session("URLError test")
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn("secret-key-12345", err_msg)
+        self.assertIn("[REDACTED]", err_msg)
+
 
 if __name__ == "__main__":
     unittest.main()
