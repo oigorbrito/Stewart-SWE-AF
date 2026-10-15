@@ -78,10 +78,12 @@ app.include_router(issue_router)
 # AgentField remains the default; this adds no provider or network capability.
 from swe_af.runtime.mock_harness import register_local_mock  # noqa: E402
 from swe_af.runtime.tool_harness import register_local_tool_backend  # noqa: E402
+from swe_af.runtime.docker_tool_harness import register_docker_tool_backend  # noqa: E402
 from swe_af.runtime.jules_adapter import register_jules  # noqa: E402
 
 register_local_mock()
 register_local_tool_backend()
+register_docker_tool_backend()
 register_jules()
 
 
