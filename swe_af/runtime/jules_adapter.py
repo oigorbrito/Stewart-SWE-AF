@@ -18,7 +18,11 @@ def _scrub_text(text: Any, api_key: Optional[str] = None) -> str:
     if text is None:
         return ""
     scrubbed = str(text)
-    if api_key and len(api_key.strip()) >= 4:
+    # Short credentials cannot be safely distinguished from ordinary words.
+    # Fail closed rather than reflecting any untrusted error text.
+    if api_key and len(api_key.strip()) < 4:
+        return "[REDACTED]"
+    if api_key and api_key.strip():
         scrubbed = scrubbed.replace(api_key.strip(), "[REDACTED]")
     for pattern in _SECRET_PATTERNS:
         scrubbed = pattern.sub("[REDACTED]", scrubbed)
