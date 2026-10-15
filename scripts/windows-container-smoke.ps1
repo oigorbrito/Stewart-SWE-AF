@@ -27,8 +27,18 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Docker Engine unavailable; start Docker Desktop first.' }
     # Pull is explicit and happens before --network none, because the daemon
     # may need network access to fetch an image not present locally.
-    & docker image inspect $Image *> $null
-    if ($LASTEXITCODE -ne 0) {
+    # Docker returns a nonzero exit code for an absent image. PowerShell 5.1
+    # can promote native stderr to a terminating error with Stop enabled.
+    # Capture output as strings under Continue, then inspect the exit code.
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $inspectOutput = & docker image inspect $Image 2>&1 | Out-String
+        $imagePresent = ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if (-not $imagePresent) {
         Write-Output "Image missing; pulling $Image (network used only for image download)."
         & docker pull $Image
         if ($LASTEXITCODE -ne 0) { throw 'Docker image pull failed.' }
@@ -38,5 +48,11 @@ try {
     Write-Output 'PASS: Kevin container smoke complete. No host directories mounted.'
 } finally {
     # Best-effort cleanup on interruption; the container also uses --rm.
-    & docker rm -f $Name 2>$null | Out-Null
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & docker rm -f $Name 2>&1 | Out-Null
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
 }
