@@ -7,11 +7,13 @@ from typing import Any, Dict, Optional
 
 
 _SECRET_PATTERNS = [
-    re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]+", re.IGNORECASE),
-    re.compile(r"(?:api[_-]?key|token|secret|password|auth|authorization)\s*[:=]\s*['\"]?[A-Za-z0-9_\-\.]+['\"]?", re.IGNORECASE),
+    re.compile(r"Bearer\s+['\"]?[A-Za-z0-9_\-\.+/=~]+['\"]?", re.IGNORECASE),
+    re.compile(r"(?:api[_-]?key|token|secret|password|auth|authorization)\s*[:=]\s*['\"]?[A-Za-z0-9_\-\.+/=~]+['\"]?", re.IGNORECASE),
     re.compile(r"AIza[A-Za-z0-9_\-]{30,}"),
     re.compile(r"(?:sk-[A-Za-z0-9_\-]{20,}|gh[pousr]_[A-Za-z0-9_\-]{20,})"),
 ]
+_URL_USERINFO_PATTERN = re.compile(r"(://)[^/\s@]+@")
+_USERINFO_CRED_PATTERN = re.compile(r"(?<![a-zA-Z0-9_\-\.])([a-zA-Z0-9_\-\.]+:[^/\s@:]+)@")
 
 
 def _scrub_text(text: Any, api_key: Optional[str] = None) -> str:
@@ -24,6 +26,8 @@ def _scrub_text(text: Any, api_key: Optional[str] = None) -> str:
         return "[REDACTED]"
     if api_key and api_key.strip():
         scrubbed = scrubbed.replace(api_key.strip(), "[REDACTED]")
+    scrubbed = _URL_USERINFO_PATTERN.sub(r"\1[REDACTED]@", scrubbed)
+    scrubbed = _USERINFO_CRED_PATTERN.sub(r"[REDACTED]@", scrubbed)
     for pattern in _SECRET_PATTERNS:
         scrubbed = pattern.sub("[REDACTED]", scrubbed)
     # Collapse newlines, carriage returns, and tabs to prevent log injection
