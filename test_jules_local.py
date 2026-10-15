@@ -312,5 +312,24 @@ class TestJulesSimulatedTransport(unittest.TestCase):
         self.assertIn("[REDACTED]", err_msg)
 
 
+class TestJulesErrorScrubbingEdges(unittest.TestCase):
+    def test_short_caller_key_fails_closed(self):
+        from swe_af.runtime.jules_adapter import _scrub_text
+        self.assertEqual(_scrub_text("remote response mentions xy", "xy"), "[REDACTED]")
+        self.assertEqual(_scrub_text("remote response", "a"), "[REDACTED]")
+
+    def test_url_userinfo_is_redacted_without_known_key(self):
+        from swe_af.runtime.jules_adapter import _scrub_text
+        message = _scrub_text("Cannot reach https://alice:credential123@example.test/path")
+        self.assertNotIn("alice:credential123", message)
+        self.assertIn("[REDACTED]", message)
+
+    def test_bearer_token_with_unusual_characters_is_redacted(self):
+        from swe_af.runtime.jules_adapter import _scrub_text
+        message = _scrub_text("Bearer token+/=abc rejected")
+        self.assertNotIn("token+/=abc", message)
+        self.assertIn("[REDACTED]", message)
+
+
 if __name__ == "__main__":
     unittest.main()
