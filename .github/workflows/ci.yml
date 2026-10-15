@@ -25,6 +25,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      - name: Run Gemini mock runtime + Git workflow
+        run: python -m pytest -q tests/test_model_config.py tests/test_dockerfile.py tests/issue/test_gemini_mock_workflow.py
+        env:
+          AGENTFIELD_SERVER: http://localhost:9999
+
       - name: Run checks
         run: make check
         env:
