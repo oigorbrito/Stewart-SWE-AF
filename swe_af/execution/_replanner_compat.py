@@ -1,4 +1,4 @@
-"""Replanner agent — backward-compat direct invocation via router.harness()."""
+"""Replanner agent — backward-compat direct invocation through the harness dispatcher."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from swe_af.execution.schemas import (
 )
 from swe_af.prompts.replanner import SYSTEM_PROMPT, replanner_task_prompt
 from swe_af.reasoners import router
+from swe_af.runtime.application_harness import dispatch_harness
 from swe_af.runtime.providers import runtime_to_harness_adapter
 
 
@@ -43,7 +44,8 @@ async def invoke_replanner(
     provider = runtime_to_harness_adapter(config.ai_provider)
 
     try:
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             prompt=task_prompt,
             schema=ReplanDecision,
             provider=provider,

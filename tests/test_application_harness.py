@@ -222,16 +222,71 @@ def test_network_guard_restores_methods_and_is_inactive_after_context(monkeypatc
         return "original sentinel"
 
     monkeypatch.setattr(socket.socket, "connect", harmless_connect)
+    pre_connect = socket.socket.connect
+    pre_connect_ex = socket.socket.connect_ex
+    pre_create_conn = socket.create_connection
+    pre_getaddrinfo = socket.getaddrinfo
+
+    from asyncio.base_events import BaseEventLoop
+    from asyncio.proactor_events import BaseProactorEventLoop
+    from asyncio.selector_events import BaseSelectorEventLoop
+
+    pre_loop_create_conn = BaseEventLoop.create_connection
+    pre_loop_connect_sock = BaseEventLoop._connect_sock
+    pre_loop_getaddrinfo = BaseEventLoop.getaddrinfo
+    pre_selector_sock_connect = BaseSelectorEventLoop.sock_connect
+    pre_proactor_sock_connect = BaseProactorEventLoop.sock_connect
+
     with pytest.raises(NetworkAttemptBlocked):
         with _deny_network_connections():
             socket.socket.connect(None, ("198.51.100.11", 443))
 
     # The pre-context implementation is restored and runs normally afterwards.
     assert socket.socket.connect is harmless_connect
+    assert socket.socket.connect is pre_connect
     assert socket.socket.connect(None, ("not-a-real-socket", 1)) == "original sentinel"
-    assert socket.socket.connect_ex is _ORIGINAL_SOCKET_CONNECT_EX
-    assert socket.create_connection is _ORIGINAL_CREATE_CONNECTION
-    assert socket.getaddrinfo is _ORIGINAL_GETADDRINFO
+    assert socket.socket.connect_ex is pre_connect_ex
+    assert socket.create_connection is pre_create_conn
+    assert socket.getaddrinfo is pre_getaddrinfo
+    assert BaseEventLoop.create_connection is pre_loop_create_conn
+    assert BaseEventLoop._connect_sock is pre_loop_connect_sock
+    assert BaseEventLoop.getaddrinfo is pre_loop_getaddrinfo
+    assert BaseSelectorEventLoop.sock_connect is pre_selector_sock_connect
+    assert BaseProactorEventLoop.sock_connect is pre_proactor_sock_connect
+
+
+def test_network_guard_restores_methods_on_arbitrary_exception():
+    pre_connect = socket.socket.connect
+    pre_connect_ex = socket.socket.connect_ex
+    pre_create_conn = socket.create_connection
+    pre_getaddrinfo = socket.getaddrinfo
+
+    from asyncio.base_events import BaseEventLoop
+    from asyncio.proactor_events import BaseProactorEventLoop
+    from asyncio.selector_events import BaseSelectorEventLoop
+
+    pre_loop_create_conn = BaseEventLoop.create_connection
+    pre_loop_connect_sock = BaseEventLoop._connect_sock
+    pre_loop_getaddrinfo = BaseEventLoop.getaddrinfo
+    pre_selector_sock_connect = BaseSelectorEventLoop.sock_connect
+    pre_proactor_sock_connect = BaseProactorEventLoop.sock_connect
+
+    class ArbitraryTestException(Exception):
+        pass
+
+    with pytest.raises(ArbitraryTestException):
+        with _deny_network_connections():
+            raise ArbitraryTestException("unexpected error inside guarded block")
+
+    assert socket.socket.connect is pre_connect
+    assert socket.socket.connect_ex is pre_connect_ex
+    assert socket.create_connection is pre_create_conn
+    assert socket.getaddrinfo is pre_getaddrinfo
+    assert BaseEventLoop.create_connection is pre_loop_create_conn
+    assert BaseEventLoop._connect_sock is pre_loop_connect_sock
+    assert BaseEventLoop.getaddrinfo is pre_loop_getaddrinfo
+    assert BaseSelectorEventLoop.sock_connect is pre_selector_sock_connect
+    assert BaseProactorEventLoop.sock_connect is pre_proactor_sock_connect
 
 
 def test_network_guard_does_not_contaminate_following_tests():
@@ -321,17 +376,38 @@ async def test_real_fast_planner_uses_registered_local_mock_without_network(
         intercepted_requests = []
         intercepted_notes = []
 
-        async def block_sdk_request(method, url, **kwargs):
+        from agentfield import Agent
+        from agentfield.client import AgentFieldClient
+
+        async def block_sdk_request(*args, **kwargs):
+            if len(args) >= 3:
+                method, url = args[1], args[2]
+            elif len(args) == 2:
+                method, url = args[0], args[1]
+            else:
+                method = kwargs.get("method")
+                url = kwargs.get("url")
             intercepted_requests.append((method, url))
             raise RuntimeError("test blocked AgentField transport")
 
-        def intercept_sdk_note(message, tags=None):
+        def intercept_sdk_note(*args, **kwargs):
+            if len(args) >= 2 and not isinstance(args[0], str):
+                message = args[1]
+                tags = args[2] if len(args) > 2 else kwargs.get("tags")
+            elif len(args) >= 1 and isinstance(args[0], str):
+                message = args[0]
+                tags = args[1] if len(args) > 1 else kwargs.get("tags")
+            else:
+                message = kwargs.get("message", "")
+                tags = kwargs.get("tags")
             intercepted_notes.append((message, tuple(tags or ())))
 
         monkeypatch.setattr(
             composed_fast_app.client, "_async_request", block_sdk_request
         )
         monkeypatch.setattr(composed_fast_app, "note", intercept_sdk_note)
+        monkeypatch.setattr(AgentFieldClient, "_async_request", block_sdk_request)
+        monkeypatch.setattr(Agent, "note", intercept_sdk_note)
 
         output = await fast_plan_tasks(
             goal="local fixture goal",

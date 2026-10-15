@@ -37,6 +37,15 @@ app = Agent(
 
 app.include_router(fast_router)
 
+# Register the explicitly selectable local fixture backend in this app process.
+from swe_af.runtime.mock_harness import register_local_mock  # noqa: E402
+from swe_af.runtime.tool_harness import register_local_tool_backend  # noqa: E402
+from swe_af.runtime.jules_adapter import register_jules  # noqa: E402
+
+register_local_mock()
+register_local_tool_backend()
+register_jules()
+
 # Include the planner's execution router so that router.note() calls inside
 # the original execution_agents functions (run_coder, run_verifier, etc.)
 # work when delegated to via the thin wrappers.
@@ -50,9 +59,10 @@ app.include_router(_issue_router)
 
 
 def _repo_name_from_url(url: str) -> str:
-    """Extract repo name from a GitHub URL."""
-    match = re.search(r"/([^/]+?)(?:\.git)?$", url.rstrip("/"))
-    return match.group(1) if match else "repo"
+    """Extract repo name from a URL, handling both POSIX and Windows paths."""
+    # Get the final component and strip a trailing .git if present.
+    base = os.path.basename(url.rstrip("/\\"))
+    return base.removesuffix('.git') if base.lower().endswith('.git') else base
 
 
 def _runtime_to_provider(runtime: str) -> str:
@@ -90,6 +100,15 @@ def _normalized_remote(url: str) -> str:
 
 
 def _clone_repo(repo_url: str, repo_path: str, *, reclone: bool = False) -> None:
+    # If recloning, ensure the target directory does not exist to avoid git errors.
+    if reclone and os.path.isdir(repo_path):
+        def _onerror(func, path, exc_info):
+            try:
+                os.chmod(path, 0o777)
+                func(path)
+            except Exception:
+                pass
+        shutil.rmtree(repo_path, onerror=_onerror)
     os.makedirs(os.path.dirname(repo_path) or ".", exist_ok=True)
     clone_result = subprocess.run(
         ["git", "clone", repo_url, repo_path],
@@ -106,7 +125,7 @@ def _clone_repo(repo_url: str, repo_path: str, *, reclone: bool = False) -> None
         f"Clone failed (exit {clone_result.returncode}): {err}",
         tags=["fast_build", "clone", "error"],
     )
-    raise RuntimeError(f"git clone failed (exit {clone_result.returncode}): {err}")
+    raise RuntimeError(f"git clone failed (exit {clone_result.returncode}): repository does not exist – {err}")
 
 
 def _prepare_repo(
@@ -216,6 +235,12 @@ def _prepare_repo(
             )
             shutil.rmtree(repo_path, ignore_errors=True)
             _clone_repo(repo_url, repo_path, reclone=True)
+            # Clean untracked files after recloning to ensure no leftovers
+            subprocess.run([
+                "git",
+                "clean",
+                "-fdx",
+            ], cwd=repo_path, capture_output=True, text=True)
     else:
         os.makedirs(repo_path, exist_ok=True)
 

@@ -165,10 +165,10 @@ def _persist_session_audit(session_id: str, outcome: str = "created", log_path: 
             # Create file with restricted user-only permissions if supported
             if not path.exists():
                 path.touch(mode=0o600, exist_ok=True)
-                try:
-                    os.chmod(path, 0o600)
-                except (OSError, NotImplementedError):
-                    pass
+            try:
+                os.chmod(path, 0o600)
+            except (OSError, NotImplementedError):
+                pass
             with open(path, "a", encoding="utf-8") as f:
                 f.write(line)
                 f.flush()
@@ -193,7 +193,10 @@ class JulesHarnessAgent:
 
         adapter = JulesAdapter()
         require_plan_approval = options.get("require_plan_approval", True)
-        session = adapter.create_session(prompt, require_plan_approval=require_plan_approval)
+        # Execute network creation off the asyncio event loop thread
+        session = await asyncio.to_thread(
+            adapter.create_session, prompt, require_plan_approval=require_plan_approval
+        )
         session_id = session.get("id") or session.get("name")
 
         # Step 1: Guarantee persistence of session identifier immediately after creation
@@ -204,8 +207,8 @@ class JulesHarnessAgent:
             except Exception as exc:
                 audit_error = str(exc)
 
-        # Step 2: Query follow-up status and activities
-        skip_queries = options.get("skip_status_and_result", False)
+        # Step 2: Query follow-up status and activities only if audit succeeded and not skipped
+        skip_queries = options.get("skip_status_and_result", False) or bool(audit_error)
         wait_for_completion = options.get("wait_for_completion", True)
         poll_interval = float(options.get("poll_interval", os.environ.get("JULES_POLL_INTERVAL", "1.0")))
         poll_timeout = float(
@@ -222,7 +225,8 @@ class JulesHarnessAgent:
         if not skip_queries and session_id:
             while True:
                 try:
-                    status = adapter.get_status(session_id)
+                    # Non-blocking async status query
+                    status = await asyncio.to_thread(adapter.get_status, session_id)
                 except Exception as exc:
                     status = {"unconfirmed": True, "error": str(exc), "state": "UNCONFIRMED"}
 
@@ -240,7 +244,7 @@ class JulesHarnessAgent:
                     break
 
                 if status.get("unconfirmed"):
-                    # Stop polling if remote endpoint reports an error
+                    # Immediately interrupt remote flow when status query fails
                     break
 
                 now = time.monotonic()
@@ -256,10 +260,14 @@ class JulesHarnessAgent:
                     timed_out = True
                     break
 
-            # Fetch activities / results once terminal, unconfirmed, or requested
-            if state_str in TERMINAL_STATES or not wait_for_completion or status.get("unconfirmed"):
+            # Fetch activities / results once terminal or requested
+            # Halts without calling the remote activities endpoint if status query failed
+            if status.get("unconfirmed"):
+                result = {"unconfirmed": True, "activities": []}
+            elif state_str in TERMINAL_STATES or not wait_for_completion:
                 try:
-                    result = adapter.get_result(session_id)
+                    # Non-blocking async result query
+                    result = await asyncio.to_thread(adapter.get_result, session_id)
                 except Exception as exc:
                     result = {"unconfirmed": True, "error": str(exc), "activities": []}
             elif timed_out:
@@ -267,8 +275,12 @@ class JulesHarnessAgent:
             else:
                 result = {"activities": [], "in_progress": True}
         else:
-            status = {"state": session.get("state") or session.get("status") or "QUEUED", "queried": False}
-            result = {"queried": False}
+            if audit_error:
+                status = {"state": "AUDIT_FAILED", "queried": False, "audit_failure": True}
+                result = {"queried": False, "activities": []}
+            else:
+                status = {"state": session.get("state") or session.get("status") or "QUEUED", "queried": False}
+                result = {"queried": False}
 
         state_str = str(
             status.get("state")
@@ -352,6 +364,8 @@ class JulesHarnessAgent:
             failure_type=failure_type,
             session_id=session_id,
             summary=summary,
+            complete=complete,
+            files_changed=files_changed,
             status=status,
             activities=result,
             cost_usd=0.0,

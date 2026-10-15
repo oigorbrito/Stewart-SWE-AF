@@ -153,7 +153,6 @@ class TestJulesHarnessIntegration(unittest.TestCase):
         mock_urlopen.side_effect = [
             MagicMock(__enter__=MagicMock(return_value=resp_session), __exit__=MagicMock()),
             http_err,  # get_status fails
-            http_err,  # get_result fails
         ]
 
         old_backend = os.environ.get("SWE_HARNESS_BACKEND")
@@ -171,6 +170,10 @@ class TestJulesHarnessIntegration(unittest.TestCase):
             self.assertTrue(result.status.get("unconfirmed"))
             self.assertIn("404", result.status.get("error", ""))
             self.assertTrue(result.activities.get("unconfirmed"))
+            # Remote flow stopped immediately without calling activities endpoint
+            self.assertEqual(mock_urlopen.call_count, 2)
+            self.assertTrue(result.is_error)
+            self.assertFalse(result.parsed["complete"])
         finally:
             if old_backend is not None:
                 os.environ["SWE_HARNESS_BACKEND"] = old_backend
@@ -232,31 +235,32 @@ class TestJulesHarnessIntegration(unittest.TestCase):
 
         resp_session = MagicMock()
         resp_session.read.return_value = b'{"name": "sessions/sess-fail-write", "id": "sess-fail-write"}'
-        resp_status = MagicMock()
-        resp_status.read.return_value = b'{"state": "COMPLETED"}'
-        resp_result = MagicMock()
-        resp_result.read.return_value = b'{"activities": []}'
 
         mock_urlopen.side_effect = [
             MagicMock(__enter__=MagicMock(return_value=resp_session), __exit__=MagicMock()),
-            MagicMock(__enter__=MagicMock(return_value=resp_status), __exit__=MagicMock()),
-            MagicMock(__enter__=MagicMock(return_value=resp_result), __exit__=MagicMock()),
         ]
 
         agent = JulesHarnessAgent()
         res = asyncio.run(agent.harness("Test audit failure isolation"))
 
-        # Still only 1 POST call was made (no retry/second creation)
-        post_calls = [c for c in mock_urlopen.call_args_list if c[0][0].get_method() == "POST"]
-        self.assertEqual(len(post_calls), 1)
-        # Session id is preserved in memory and warning/failure is surfaced
+        # Exactly 1 POST call made; zero follow-up calls (no status or activities query)
+        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertEqual(mock_urlopen.call_args_list[0][0][0].get_method(), "POST")
+        # Session id is preserved in memory and on the returned result
         self.assertEqual(res.session_id, "sess-fail-write")
         self.assertTrue(res.is_error)
         self.assertEqual(res.failure_type, "audit_persistence_failure")
+        self.assertFalse(res.complete)
+        self.assertFalse(res.parsed["complete"])
+        self.assertEqual(res.files_changed, [])
+        self.assertIn("Simulated audit disk write failure", res.error_message)
+        # Ensure status and activities were not queried
+        self.assertEqual(res.status, {"state": "AUDIT_FAILED", "queried": False, "audit_failure": True})
+        self.assertEqual(res.activities, {"queried": False, "activities": []})
 
     @patch("urllib.request.urlopen")
     def test_jules_coder_result_compatibility_and_attributes(self, mock_urlopen):
-        """Verify Jules output adheres to CoderResult and exposes all expected attributes."""
+        """Verify Jules output adheres to CoderResult and exposes all expected attributes at top-level and parsed level."""
         from swe_af.execution.schemas import CoderResult
 
         resp_session = MagicMock()
@@ -264,7 +268,7 @@ class TestJulesHarnessIntegration(unittest.TestCase):
         resp_status = MagicMock()
         resp_status.read.return_value = b'{"name": "sessions/sess-coder", "state": "COMPLETED"}'
         resp_result = MagicMock()
-        resp_result.read.return_value = b'{"activities": [{"id": "act-1", "description": "code written"}]}'
+        resp_result.read.return_value = b'{"activities": [{"id": "act-1", "files_changed": ["src/fix.py"]}]}'
 
         mock_urlopen.side_effect = [
             MagicMock(__enter__=MagicMock(return_value=resp_session), __exit__=MagicMock()),
@@ -275,17 +279,32 @@ class TestJulesHarnessIntegration(unittest.TestCase):
         agent = JulesHarnessAgent()
         res = asyncio.run(agent.harness("Implement feature in worktree", schema=CoderResult))
 
+        # Level 1: Parsed CoderResult schema object
         self.assertIsInstance(res.parsed, CoderResult)
         self.assertTrue(res.parsed.complete)
         self.assertIn("sess-coder", res.parsed.summary)
-        self.assertEqual(res.parsed.files_changed, [])
+        self.assertEqual(res.parsed.files_changed, ["src/fix.py"])
         dumped = res.parsed.model_dump()
         self.assertIn("complete", dumped)
         self.assertIn("summary", dumped)
         self.assertIn("files_changed", dumped)
+
+        # Level 2: Top-level HarnessResult (SimpleNamespace) attributes
+        self.assertTrue(res.complete)
+        self.assertEqual(res.files_changed, ["src/fix.py"])
+        self.assertIn("sess-coder", res.summary)
         self.assertEqual(res.model, "jules")
-        self.assertGreaterEqual(res.total_tokens, 0)
+        self.assertEqual(res.session_id, "sess-coder")
         self.assertFalse(res.is_error)
+        self.assertEqual(res.failure_type, "none")
+        self.assertIsNone(res.error_message)
+
+        # Token counters
+        self.assertGreater(res.input_tokens, 0)
+        self.assertGreater(res.output_tokens, 0)
+        self.assertEqual(res.total_tokens, res.input_tokens + res.output_tokens)
+        self.assertEqual(res.cache_read_tokens, 0)
+        self.assertEqual(res.cache_creation_tokens, 0)
 
     @patch("urllib.request.urlopen")
     def test_run_coder_integrates_cleanly_with_jules_backend(self, mock_urlopen):
@@ -535,6 +554,130 @@ class TestJulesHarnessIntegration(unittest.TestCase):
         self.assertFalse(res.parsed["complete"])
         self.assertFalse(res.is_error)
         self.assertEqual(mock_urlopen.call_count, 3)
+
+    @patch("urllib.request.urlopen")
+    def test_async_io_does_not_block_event_loop(self, mock_urlopen):
+        """Regression: synchronous urllib calls run in worker threads and do NOT block asyncio event loop."""
+        import time
+
+        resp_session = MagicMock()
+        resp_session.read.return_value = b'{"name": "sessions/sess-async-io", "id": "sess-async-io", "state": "COMPLETED"}'
+
+        resp_status = MagicMock()
+        resp_status.read.return_value = b'{"name": "sessions/sess-async-io", "state": "COMPLETED"}'
+
+        resp_result = MagicMock()
+        resp_result.read.return_value = b'{"activities": []}'
+
+        def fake_urlopen_with_delay(req, *args, **kwargs):
+            # Simulate blocking network I/O
+            time.sleep(0.04)
+            url = req.full_url
+            if "/activities" in url:
+                return MagicMock(__enter__=MagicMock(return_value=resp_result), __exit__=MagicMock())
+            elif "sessions/" in url:
+                return MagicMock(__enter__=MagicMock(return_value=resp_status), __exit__=MagicMock())
+            return MagicMock(__enter__=MagicMock(return_value=resp_session), __exit__=MagicMock())
+
+        mock_urlopen.side_effect = fake_urlopen_with_delay
+
+        async def run_concurrently():
+            agent = JulesHarnessAgent()
+            ticks = 0
+
+            async def ticker():
+                nonlocal ticks
+                for _ in range(20):
+                    await asyncio.sleep(0.005)
+                    ticks += 1
+
+            ticker_task = asyncio.create_task(ticker())
+            harness_task = asyncio.create_task(agent.harness("Task with network latency"))
+            res, _ = await asyncio.gather(harness_task, ticker_task)
+            return res, ticks
+
+        result, ticks_counted = asyncio.run(run_concurrently())
+        self.assertEqual(result.session_id, "sess-async-io")
+        self.assertTrue(result.parsed["complete"])
+        # If event loop was blocked synchronously by time.sleep, ticker would not have made progress
+        self.assertGreater(ticks_counted, 2, "Event loop was starved/blocked by synchronous network call")
+
+    @patch("urllib.request.urlopen")
+    def test_status_query_failure_halts_flow_without_calling_activities(self, mock_urlopen):
+        """Regression: status failure immediately interrupts remote flow and NEVER calls activities endpoint."""
+        import io, urllib.error
+
+        resp_session = MagicMock()
+        resp_session.read.return_value = b'{"name": "sessions/sess-status-fail", "id": "sess-status-fail"}'
+
+        err_body = io.BytesIO(b'{"error": {"code": 500, "message": "Backend status unavailable"}}')
+        status_err = urllib.error.HTTPError(
+            url="https://jules.googleapis.com/v1alpha/sessions/sess-status-fail",
+            code=500,
+            msg="Internal Server Error",
+            hdrs={},
+            fp=err_body,
+        )
+
+        mock_urlopen.side_effect = [
+            MagicMock(__enter__=MagicMock(return_value=resp_session), __exit__=MagicMock()),
+            status_err,  # Status call fails
+        ]
+
+        agent = JulesHarnessAgent()
+        res = asyncio.run(agent.harness("Status failure task"))
+
+        # Preserves session identifier
+        self.assertEqual(res.session_id, "sess-status-fail")
+        # Diagnostic message sanitized and preserved
+        self.assertTrue(res.status.get("unconfirmed"))
+        self.assertIn("500", res.status.get("error", ""))
+        self.assertIn("Backend status unavailable", res.status.get("error", ""))
+        # Fail-closed
+        self.assertTrue(res.is_error)
+        self.assertEqual(res.failure_type, "status_query_error")
+        self.assertFalse(res.parsed["complete"])
+        # CRITICAL: exactly 2 calls made (POST create, GET status); activities endpoint was NEVER called
+        self.assertEqual(mock_urlopen.call_count, 2)
+        self.assertEqual(res.activities, {"unconfirmed": True, "activities": []})
+
+    def test_audit_log_enforces_0600_permissions_on_preexisting_file(self):
+        """Regression: audit logger enforces 0600 permissions also for preexisting log files."""
+        import os, stat, tempfile
+        from pathlib import Path
+        from swe_af.runtime.jules_adapter import _persist_session_audit
+
+        with tempfile.TemporaryDirectory() as td:
+            audit_file = Path(td) / "preexisting_audit.jsonl"
+            # Create preexisting file with lax permissions
+            audit_file.write_text('{"init": true}\n', encoding="utf-8")
+            try:
+                os.chmod(audit_file, 0o644)
+            except (OSError, NotImplementedError):
+                pass
+
+            _persist_session_audit("sess-preexist-1", outcome="created", log_path=audit_file)
+
+            # Check that file now has 0600 on POSIX platforms
+            if os.name == "posix":
+                current_mode = stat.S_IMODE(audit_file.stat().st_mode)
+                self.assertEqual(current_mode, 0o600)
+
+            lines = audit_file.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertIn("sess-preexist-1", lines[1])
+
+        # Test OS limitation handling (e.g. OSError / NotImplementedError during chmod)
+        with tempfile.TemporaryDirectory() as td:
+            audit_file = Path(td) / "os_limitation_audit.jsonl"
+            audit_file.write_text('{"init": true}\n', encoding="utf-8")
+            with patch("os.chmod", side_effect=OSError("Operation not permitted")):
+                # Must not raise or crash
+                _persist_session_audit("sess-preexist-os-err", outcome="created", log_path=audit_file)
+
+            lines = audit_file.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertIn("sess-preexist-os-err", lines[1])
 
 
 if __name__ == "__main__":

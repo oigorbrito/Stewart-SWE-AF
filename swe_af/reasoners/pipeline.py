@@ -1,7 +1,7 @@
 """Internal reasoners for the SWE planning pipeline.
 
 Each reasoner wraps a single agent role (PM, Architect, Tech Lead, Sprint Planner)
-and uses router.harness() for actual AI execution. The @router.reasoner() decorator provides
+and uses the explicit harness dispatcher for AI execution. The @router.reasoner() decorator provides
 FastAPI endpoints, workflow DAG tracking, and observability via router.note().
 """
 
@@ -27,6 +27,7 @@ from swe_af.reasoners.schemas import (
     PRD,
     ReviewResult,
 )
+from swe_af.runtime.application_harness import dispatch_harness
 from swe_af.runtime.providers import runtime_to_harness_adapter
 from swe_af.surface import internal_role
 
@@ -158,7 +159,7 @@ def _assign_sequence_numbers(issues: list[dict], levels: list[list[str]]) -> lis
 
 # Per-stage bounds on the extra *outer* schema-bound harness calls a planning
 # role gets when its structured output does not parse or validate. These count
-# router.harness() calls, not model runs: the SDK already retries schema
+# harness dispatch calls, not model runs: the SDK already retries schema
 # failures inside one harness() call (DEFAULT_SCHEMA_RETRIES = 2), so a single
 # outer attempt can itself be up to three subprocess runs. The outer bounds
 # re-issue the whole call with the validation error fed back into the task
@@ -510,7 +511,8 @@ async def run_product_manager(
             prompt = task_prompt
             if previous_error:
                 prompt = f"{task_prompt}\n\n{_schema_retry_context(previous_error)}"
-            return await router.harness(
+            return await dispatch_harness(
+                router,
                 prompt=prompt,
                 schema=PRD,
                 provider=provider,
@@ -617,7 +619,8 @@ async def run_environment_scout(
             workspace_manifest=ws_manifest,
             prior_user_responses=prior_user_responses,
         )
-        result = await router.harness(
+        result = await dispatch_harness(
+            router,
             prompt=task_prompt,
             schema=ScoutResult,
             provider=provider,
@@ -723,7 +726,8 @@ async def run_architect(
         prompt = task_prompt
         if previous_error:
             prompt = f"{task_prompt}\n\n{_schema_retry_context(previous_error)}"
-        return await router.harness(
+        return await dispatch_harness(
+            router,
             prompt=prompt,
             schema=Architecture,
             provider=provider,
@@ -791,7 +795,8 @@ async def run_tech_lead(
         prompt = task_prompt
         if previous_error:
             prompt = f"{task_prompt}\n\n{_schema_retry_context(previous_error)}"
-        return await router.harness(
+        return await dispatch_harness(
+            router,
             prompt=prompt,
             schema=ReviewResult,
             provider=provider,
@@ -886,7 +891,8 @@ async def run_sprint_planner(
         prompt = task_prompt
         if previous_error:
             prompt = f"{task_prompt}\n\n{_schema_retry_context(previous_error)}"
-        return await router.harness(
+        return await dispatch_harness(
+            router,
             prompt=prompt,
             schema=SprintPlanOutput,
             provider=provider,

@@ -149,7 +149,7 @@ def is_timeout_error(error_message: str) -> bool:
 def check_fatal_harness_error(result) -> None:
     """Inspect a HarnessResult and raise ``FatalHarnessError`` if fatal.
 
-    Should be called immediately after ``router.harness()`` returns,
+    Should be called immediately after the harness dispatcher returns,
     *before* any ``result.parsed is None`` check, so the real error
     message surfaces instead of a misleading generic one.
 
